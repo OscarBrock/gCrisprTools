@@ -176,8 +176,6 @@ ct.resultCheck <- function(summaryDF){
 ##' @examples 
 ##' data('ann', 'es', 'fit', 'resultsDF')
 ##' ct.buildSE(es, ann = ann, fit = 'fit', summaryList = list('resA' = resultsDF, 'resB' = resultsDF))
-##' 
-##' @export
 ct.buildSE <- function(es, 
                        sampleKey = NULL, 
                        ann = NULL, 
@@ -249,46 +247,55 @@ ct.buildSE <- function(es,
 ##' @examples data('resultsDF')
 ##' ct.simpleResult(resultsDF)
 ##' @export
-ct.simpleResult <- function(summaryDF, collapse = 'geneSymbol'){
+ct.simpleResult <- function(summaryDF, collapse = c('geneSymbol', 'geneID')){
   
-  #Pass through a simple result object
-  stopifnot(is(summaryDF, 'data.frame'))
+  #Check inputs
+  collapse <- match.arg(collapse)
+  stopifnot(is(summaryDF, 'data.frame'), (collapse %in% names(summaryDF)))
+  
   if(length(setdiff(c("geneID", "geneSymbol", "Rho_enrich", "Rho_deplete", 'best.p', 'best.q', 'direction'), (names(summaryDF)))) == 0){
-    if(all(vapply(names(summaryDF)[1:7], function(x){class(summaryDF[,x])}, character(1)) == rep(c('character', 'numeric', 'character'), times = c(2, 4, 1)))){
-      return(summaryDF)
-    }
+    #already simplified
+    stopifnot(all(vapply(names(summaryDF)[1:7], 
+                         function(x){class(summaryDF[,x])}, 
+                         character(1)) == rep(c('character', 'numeric', 'character'), times = c(2, 4, 1))))
+    out <- summaryDF
+    
+  } else {
+    stopifnot(ct.resultCheck(summaryDF))
+    out <- summaryDF
+    
+    out$direction <- vapply(1:nrow(out), 
+                            function(x){
+                              ifelse(out[x,"Target-level Enrichment P"] < out[x,"Target-level Depletion P"], 'enrich', 'deplete')
+                            }, character(1))
+    
+    out$best.p <- vapply(1:nrow(out), 
+                         function(x){
+                           ifelse(out$direction[x] %in% 'enrich', 
+                                  out[x,"Target-level Enrichment P"], 
+                                  out[x,"Target-level Depletion P"])
+                         }, numeric(1))
+    
+    out$best.q <- vapply(1:nrow(out), 
+                         function(x){
+                           ifelse(out$direction[x] %in% 'enrich', 
+                                  out[x,"Target-level Enrichment Q"], 
+                                  out[x,"Target-level Depletion Q"])
+                         }, numeric(1)) 
+    out <- out[,c("geneID", "geneSymbol", "Rho_enrich", "Rho_deplete", 'best.p', 'best.q', 'direction')]
+    
+   
   }
-
-  #Check usual results df
-  stopifnot(ct.resultCheck(summaryDF))
-  stopifnot(collapse %in% names(summaryDF))
   
-  out <- summaryDF[!duplicated(summaryDF[,collapse]),]
+  #Cleanup duplicates - always keep strongest signals.  
+  out <- out[order(out$best.p, decreasing = FALSE),]
+  out <- out[!duplicated(out[,collapse]),]
   if(any(is.na(out[,collapse]))){
     warning(paste0('NA detected in column ', collapse, '! Omitting the associated entries.'))
     out <- out[!is.na(out[,collapse]),]
   }
   row.names(out) <- out[,collapse]
   
-  out$direction <- vapply(1:nrow(out), 
-                          function(x){
-                            ifelse(out[x,"Target-level Enrichment P"] < out[x,"Target-level Depletion P"], 'enrich', 'deplete')
-                          }, character(1))
-  
-  out$best.p <- vapply(1:nrow(out), 
-                       function(x){
-                         ifelse(out$direction[x] %in% 'enrich', 
-                                out[x,"Target-level Enrichment P"], 
-                                out[x,"Target-level Depletion P"])
-                       }, numeric(1))
-  
-  out$best.q <- vapply(1:nrow(out), 
-                       function(x){
-                         ifelse(out$direction[x] %in% 'enrich', 
-                                out[x,"Target-level Enrichment Q"], 
-                                out[x,"Target-level Depletion Q"])
-                       }, numeric(1)) 
-    out <- out[,c("geneID", "geneSymbol", "Rho_enrich", "Rho_deplete", 'best.p', 'best.q', 'direction')]
   return(out)
 }
 
@@ -301,18 +308,19 @@ ct.simpleResult <- function(summaryDF, collapse = 'geneSymbol'){
 ##' This function is largely meant to be used by other gCrisprtools functions, although there are occasions when an analyst may want to call it directly. 
 ##' Often, it is useful to pass the `collapse` argument to `ct.simpleresult()` in cases where libraries and technologies differ between screens. 
 ##' @param dflist A list of results dataframes. Names will be preserved.
+##' @param collapse Column of the provided resultsDFs on which to collapse values; should be `geneSymbol` or `geneID`.
 ##' @return A list of the in-register `simpleResult` objects, with length and names identical to `dflist`.
 ##' @examples 
 ##' data('resultsDF')
 ##' lapply(ct.regularizeContrasts(list('df1' = resultsDF[1:300,], 'df2' = resultsDF[200:400,]), nrow)
 ##' @export
-ct.regularizeContrasts <- function(dflist, ...){
+ct.regularizeContrasts <- function(dflist, collapse = c('geneSymbol', 'geneID')){
   
   #input check 
   stopifnot(is.list(dflist))
 
   #convert to simple results
-  dflist <- sapply(dflist, ct.simpleResult, ..., simplify = FALSE)
+  dflist <- sapply(dflist, ct.simpleResult, collapse = collapse, simplify = FALSE)
   
   #find common rows
   rowcounts <- table(unlist(lapply(dflist, row.names)))
@@ -381,8 +389,6 @@ ct.softLog <- function(x){
   stopifnot(is.numeric(x), all(!is.na(x)), !all(x == 0))
   return(-log10((x + (min(x[x != 0])/2))))
 }
-
-
 
 
 
